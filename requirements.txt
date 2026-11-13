@@ -1,0 +1,10 @@
+botorch==0.18.1
+cma==4.5.0
+gpytorch==1.15.2
+matplotlib==3.11.2
+numpy==2.5.4
+pandas==3.1.1
+pytest==9.2.0
+ruff==0.17.5
+scipy==1.18.1
+torch==2.15.0
