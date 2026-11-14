@@ -1,0 +1,217 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsfonts,booktabs,array,graphicx,hyperref,siunitx}
+\usepackage{float}
+\usepackage{microtype}
+\title{Ambient Dimension, Effective Dimension, and Active-Subspace Alignment:\\A Computational Comparison of Bayesian Optimisation and CMA-ES}
+\author{}
+\date{}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Var}{\operatorname{Var}}
+\newcommand{\med}{\operatorname{median}}
+% ---------------------------------------------------------------------------
+% REVISION NOTES: edited passages are marked "% REVISED". Lines marked
+% "% TODO" need numbers or checks from your own results; they are comments
+% only, so the document compiles as-is.
+% ---------------------------------------------------------------------------
+\begin{document}
+\maketitle
+\author{Raphael Hong (A0272135L)}
+\begin{abstract}
+We investigate how ambient dimension $D$, effective dimension $k$, and active-subspace orientation affect the evaluation efficiency and computational overhead of Gaussian-process Bayesian optimisation (BO) and covariance matrix adaptation evolution strategy (CMA-ES). Across 1,220 budget-controlled runs, BO with automatic relevance determination (BO-ARD) performs particularly well when the objective depends on a small number of axis-aligned coordinates, but loses much of this advantage after rotation. CMA-ES is less sensitive to orientation in final regret, although its covariance adapts only weakly within the 200-evaluation budget. % REVISED
+The results are interpreted using Gaussian-process kernel geometry, covariance and step-size adaptation, finite-budget learning dynamics, and paired statistical comparisons. % REVISED
+The conclusions concern the implemented algorithms, benchmarks, bounds and budgets, rather than universal dominance.
+\end{abstract}
+\section*{Code availability}
+All code used to generate the benchmarks, run the optimisers, and produce the results and tables in this report is available at \url{https://github.com/raphaelhyl/DSA4212-Final-Assignment}.
+\section{Introduction and research hypotheses}
+We study deterministic black-box minimisation
+\begin{equation}\min_{x\in\mathcal X}f(x),\qquad \mathcal X=[-1,1]^D,\end{equation}
+where evaluating $f$ is treated as the scarce resource. The ambient dimension $D$ counts the decision variables, whereas the effective dimension $k\le D$ counts directions that influence the objective. We test three predeclared hypotheses: (H1) BO is more evaluation-efficient than CMA-ES at moderate or high $D$ under $B=200$, with a narrowing advantage at longer budgets; (H2) BO-ARD benefits more from small, axis-aligned $k$; and (H3) rotation penalises BO-ARD more than CMA-ES. A further mechanistic hypothesis predicts orientation-insensitivity for isotropic BO, gradual ARD deterioration with rotation angle, and orientation-independent CMA-ES covariance alignment. These are empirical predictions, not theorems.
+
+\section{Benchmark geometry and mathematical properties}
+\subsection{Shifted active-subspace quadratic}
+The primary benchmark is
+\begin{equation}\label{eq:quad}
+f(x;A,x^\star)=\frac{1}{k}\|A^\top(x-x^\star)\|_2^2,\qquad A\in\R^{D\times k},\quad A^\top A=I_k,
+\end{equation}
+where $x^\star$ is seeded uniformly in $[-0.5,0.5]^D$. With $z=A^\top(x-x^\star)$, the objective becomes $f=\|z\|^2/k$: only $k$ linear combinations of the $D$ variables matter. Its gradient and Hessian are
+\begin{equation}\nabla f(x)=\frac{2}{k}AA^\top(x-x^\star),\qquad \nabla^2 f(x)=\frac{2}{k}AA^\top.\end{equation}
+Since $AA^\top$ is an orthogonal projector, the Hessian has $k$ eigenvalues $2/k$ and $D-k$ zero eigenvalues. Thus the objective is flat along $\ker(A^\top)$ and
+\begin{equation}\arg\min_{x\in\mathcal X} f(x)=\{x\in\mathcal X:A^\top(x-x^\star)=0\},\qquad f^\star=0.\end{equation}
+The minimiser is generally not unique when $k<D$. This distinction matters: small regret demonstrates finding a point near the optimal \emph{active projection}, not necessarily recovering $x^\star$ in all coordinates. When $k=D$ and $A=I_D$, the benchmark reduces to the sphere function $f(x)=\|x-x^\star\|^2/D$, whose Hessian is isotropic. % REVISED
+
+For uniformly sampled $X\in[-1,1]^D$, $\E X=0$ and $\operatorname{Cov}(X)=I_D/3$. Conditioning on the fixed instance $(A,x^\star)$,
+\begin{align}
+\E[f(X)\mid A,x^\star]&=\frac1k\left\{\operatorname{tr}\left(A^\top\frac{I_D}{3}A\right)+\|A^\top x^\star\|^2\right\}\\
+&=\frac13+\frac1k\|A^\top x^\star\|^2.\label{eq:initial}
+\end{align}
+Hence the conditional expectation need \emph{not} be identical for different orientations with the same fixed $x^\star$. Averaging also over independent $x^\star\sim U[-0.5,0.5]^D$ yields $\E\|A^\top x^\star\|^2=k/12$, so $\E_{X,x^\star}f(X)=5/12$, independent of orientation. This explains similar aggregate initial-value means without implying identical per-instance distributions.
+
+\subsection{Axis alignment, random rotation and partial rotation}
+Let $E=[e_1,\ldots,e_k]$. The aligned case uses $A=E$; the rotated case uses an orthonormal basis obtained from a seeded Gaussian QR factorisation. For the angle experiment,
+\begin{equation}A(\theta)=\cos\theta\,E+\sin\theta\,Q_\perp,\qquad E^\top Q_\perp=0,\quad Q_\perp^\top Q_\perp=I_k.\end{equation}
+It follows that $A(\theta)^\top A(\theta)=I_k$ and $E^\top A(\theta)=\cos\theta I_k$; therefore all $k$ principal angles to $\operatorname{span}(E)$ equal $\theta$. At $\theta=\pi/2$, the active subspace lies entirely in the formerly inactive coordinate block; this is \emph{not} the same construction as an unrestricted random rotation in $\R^D$.
+
+\subsection{Embedded Rosenbrock benchmark}
+For the robustness experiment, define $u=\mathbf 1+2A^\top(x-x^\star)$ and
+\begin{equation}f_{\rm Ros}(x)=\sum_{i=1}^{k-1}\left[100(u_{i+1}-u_i^2)^2+(1-u_i)^2\right].\end{equation}
+Every summand is nonnegative and $u=\mathbf 1$ at $x=x^\star$, so $f^\star=0$ is attainable. Unlike the quadratic, the Rosenbrock landscape has a curved, anisotropic valley in active coordinates; this checks whether orientation effects extend beyond a constant-Hessian objective.
+% TODO: state the value of k (and D) used for the Rosenbrock experiment here.
+
+\section{Optimisation algorithms and theory}
+\subsection{Gaussian-process Bayesian optimisation}
+Given observations $\mathcal D_t=\{(x_i,y_i)\}_{i=1}^t$, BO places a Gaussian-process prior $f\sim\mathcal{GP}(m,K)$ on the objective. Although the benchmark is deterministic, the fitted surrogate uses a Gaussian likelihood $y_i=f(x_i)+\epsilon_i$, $\epsilon_i\sim N(0,\sigma_n^2)$, with a learned constrained noise variance. Writing $K_t=[K(x_i,x_j)]$, $k_t(x)=[K(x_i,x)]$, the posterior mean and variance are
+\begin{align}
+\mu_t(x)&=m(x)+k_t(x)^\top(K_t+\sigma_n^2I)^{-1}(y-m_t),\\
+s_t^2(x)&=K(x,x)-k_t(x)^\top(K_t+\sigma_n^2I)^{-1}k_t(x).
+\end{align}
+These formulas show how all past observations contribute to the surrogate; they do \emph{not} guarantee better optimisation at every dimension or budget.
+
+The Mat\'ern-$5/2$ covariance used here has the form
+\begin{equation}\label{eq:matern}
+K(x,x')=\left(1+\sqrt5\,\rho+\frac53\rho^2\right)e^{-\sqrt5\rho},\quad
+\rho^2=\sum_{j=1}^D\frac{(\tilde x_j-\tilde x_j')^2}{\ell_j^2},
+\end{equation}
+where $\tilde x=(x+\mathbf1)/2\in[0,1]^D$. BO-ARD learns $D$ length scales $\ell_j$, while BO-iso uses a common $\ell$. The length-scale prior is $\operatorname{LogNormal}(\sqrt2+\tfrac12\ln D,\sqrt3)$, with a lower length-scale bound of $0.025$. The fitted GP standardises the outcomes, has no separate output-scale kernel, and uses a learned Gaussian noise with lower variance bound $10^{-4}$ in standardised units.
+% TODO: confirm (and state) whether BO-iso uses the same length-scale prior.
+
+For minimisation with incumbent $f_t^{\min}=\min_{i\le t}y_i$, expected improvement is
+\begin{align}
+\operatorname{EI}_t(x)&=\E[(f_t^{\min}-F(x))_+\mid\mathcal D_t]\\
+&=(f_t^{\min}-\mu_t(x))\Phi(z)+s_t(x)\phi(z),\quad z=\frac{f_t^{\min}-\mu_t(x)}{s_t(x)},
+\end{align}
+for $s_t(x)>0$, with the continuous limiting expression when $s_t(x)=0$. Here $\Phi$ and $\phi$ are the standard normal CDF and density. The implementation maximises numerically stable \texttt{LogExpectedImprovement}; the logarithm preserves the maximiser of strictly positive EI. Each run begins with $n_0=2D$ scrambled Sobol points, then fits the GP and chooses one new point per iteration using 10 acquisition restarts and 512 raw candidates.
+
+\subsection{Why ARD identifies axis-aligned inactive coordinates}
+For $A=E$, equation~\eqref{eq:quad} reduces to
+\begin{equation}f(x)=\frac1k\sum_{j=1}^k(x_j-x_j^\star)^2,\qquad \frac{\partial f}{\partial x_j}=0\quad(j>k).\end{equation}
+In the ARD distance of equation~\eqref{eq:matern}, sending $\ell_j\to\infty$ removes the contribution of coordinate $j$. This allows a GP to express approximate insensitivity to irrelevant \emph{coordinate axes}. It is a modelling capability rather than a guarantee that finite-data marginal-likelihood fitting will recover the true subspace.
+
+For general $A$, the true quadratic can be written
+\begin{equation}f(x)=\frac1k(x-x^\star)^\top P(x-x^\star),\qquad P=AA^\top.\end{equation}
+% REVISED: distinguish inductive bias from representability.
+A rotated projector $P$ usually has nonzero off-diagonal entries, whereas the squared ARD distance is determined by the diagonal matrix $\operatorname{diag}(\ell_1^{-2},\ldots,\ell_D^{-2})$. This does \emph{not} prevent the GP posterior mean from fitting a rotated quadratic given sufficient data. What a diagonal metric cannot do is encode \emph{invariance} along directions that are not coordinate axes: the ARD distance is unchanged by a displacement $v$ only if $v_j=0$ for every coordinate with finite $\ell_j$, so no choice of length scales makes the kernel insensitive to $\ker(A^\top)$ when that subspace is rotated, short of discarding all coordinates. A metric matched to this structure would be a low-rank Mahalanobis metric proportional to $P$. The diagonal ARD metric therefore supplies a poorer inductive bias for rotated active subspaces, which must instead be learned from data less efficiently. This is the central structural explanation for BO-ARD's orientation dependence. By contrast, an isotropic metric $\rho^2=\|\tilde x-\tilde x'\|^2/\ell^2$ is invariant under orthogonal rotations in unconstrained Euclidean space, although the finite box, input distribution and acquisition optimiser need not preserve exact rotation invariance.
+
+\subsection{CMA-ES and covariance adaptation}
+At generation $g$, CMA-ES samples candidates approximately as
+\begin{equation}x_i^{(g)}=m_g+\sigma_g C_g^{1/2}z_i,\qquad z_i\sim N(0,I_D),\quad i=1,\ldots,\lambda,\end{equation}
+with population size $\lambda=4+\lfloor3\ln D\rfloor$ ($\lambda=6,8,10,12$ at $D=2,5,10,20$). % REVISED
+It ranks candidates by objective value and updates the mean using the best $\mu$ samples,
+\begin{equation}m_{g+1}=\sum_{i=1}^{\mu}w_i x_{i:\lambda}^{(g)},\qquad \sum_{i=1}^{\mu}w_i=1,\quad w_i>0.\end{equation}
+The covariance update combines a retained covariance, a rank-one evolution-path contribution and a rank-$\mu$ contribution; schematically,
+\begin{equation}\label{eq:cma}
+C_{g+1}\approx (1-c_1-c_\mu)C_g+c_1p_{c,g+1}p_{c,g+1}^\top+c_\mu\sum_{i=1}^{\mu}w_i y_{i:\lambda}y_{i:\lambda}^\top,
+\end{equation}
+where $y_{i:\lambda}=(x_{i:\lambda}-m_g)/\sigma_g$. The precise library update includes correction terms and step-size evolution-path rules. When the active covariance update is enabled (the default in the \texttt{pycma} library), the rank-$\mu$ term additionally includes negatively weighted contributions from the worst-ranked samples; the mean update uses positive weights only. % REVISED  % TODO: confirm CMA_active setting in your code.
+In common CMA-ES default parametrisations, covariance learning rates decrease approximately as $O(D^{-2})$ for large $D$ with other factors held in the usual scaling regime. Consequently, a fixed number of generations gives less opportunity to learn a $D\times D$ covariance as $D$ grows. This matters when the target covariance is anisotropic ($k<D$); on the full-dimensional quadratic ($k=D$) the target covariance is isotropic and no covariance learning is required. % REVISED
+
+For the quadratic, high curvature occurs along $\operatorname{span}(A)$ and zero curvature along its orthogonal complement. A covariance that has adapted to local curvature should tend to have \emph{smaller}, not larger, variance in the active directions. Accordingly, alignment is diagnosed using the eigenvectors associated with the \emph{smallest} $k$ eigenvalues of $C$, and principal angles to $\operatorname{span}(A)$. If $U,V\in\R^{D\times k}$ have orthonormal columns, their principal angles satisfy
+\begin{equation}\cos\alpha_i=\sigma_i(U^\top V),\qquad 0\le\alpha_i\le\pi/2,\end{equation}
+where $\sigma_i$ denotes a singular value. A small largest angle indicates subspace alignment. The top-$k$ eigenvectors are retained as a comparison diagnostic, not the theoretically preferred active-direction diagnostic. These eigenvectors are only well determined when the eigenvalue gap between the $k$-th and $(k+1)$-th smallest eigenvalues is appreciable; for a nearly isotropic $C$ they are dominated by sampling noise. % REVISED
+
+CMA-ES is rotationally equivariant for an unconstrained, isotropically initialised search distribution when the objective and initial state are transformed consistently. However, the coordinatewise \texttt{BoundTransform} used to enforce $[-1,1]^D$ does not commute with arbitrary rotations. Therefore exact rotation invariance cannot be assumed for these bounded experiments.
+
+\section{Experimental design and statistical methodology}
+All methods receive the same objective instance, feasible box, budget and seed identifier; none receives $A$, $k$, $x^\star$ or $f^\star$. Instance and algorithm random streams are separated. Every objective call, including BO's initial design and CMA-ES's final incomplete generation, counts toward the budget. The primary budget is $B=200$; for $D=k=20$, extended runs use $B=500$ for BO-ARD and $B=1000$ for CMA-ES and random search. These unequal extended horizons must not be interpreted as a head-to-head comparison at $t=1000$. The 1,220 runs used their full budgets with no GP fit failures or early termination.
+
+\subsection{Regret, targets and expected running time}
+Since $f^\star=0$, best-so-far simple regret is
+\begin{equation}r_t=\min_{1\le i\le t}f(x_i)-f^\star=\min_{1\le i\le t}f(x_i).\end{equation}
+This metric is nonincreasing in $t$ by construction, even when individual evaluations worsen. Define $L_s=\log_{10}(r_{B,s}+10^{-12})$; differences in $L$ represent orders of magnitude. A difference of $-2$ corresponds approximately to a hundredfold smaller regret when regrets are well above the numerical offset.
+
+For a target $\varepsilon$, let $T_{s,\varepsilon}=\inf\{t:r_{t,s}\le\varepsilon\}$ and let $S_\varepsilon$ denote the set of successful runs. The success rate is $|S_\varepsilon|/n$, and the expected-running-time estimator used here is
+\begin{equation}\widehat{\operatorname{ERT}}(\varepsilon)=\frac{\sum_{s=1}^n\min(T_{s,\varepsilon},B)}{|S_\varepsilon|},\end{equation}
+with $\widehat{\operatorname{ERT}}=\infty$ when there are no successes. This is the total evaluation effort per observed successful run under a restart interpretation; it is not the mean of successful hitting times alone. The ECDF pools 13 logarithmically spaced targets between $10^{-4}$ and $1$ and reports the fraction solved by each evaluation count.
+% TODO: ERT and ECDF results are defined here but never reported in Section 5.
+%       Either add a table/figure (e.g. ECDF for Experiments 1 and 3) or remove
+%       this subsection.
+
+\subsection{Paired effects and uncertainty}
+For two methods $a,b$ on seed $s$, use $d_s=L_{a,s}-L_{b,s}$. Pairing controls for instance-to-instance variation. We report the sample median of $d_s$, percentile-bootstrap 95\% confidence intervals from 10,000 resamples of \emph{seed pairs}, Wilcoxon signed-rank tests and Holm-adjusted $p$-values within each experiment. The median of paired log differences is not generally the logarithm of the ratio of marginal median regrets.
+% TODO: Holm-adjusted p-values are promised but never reported; add them
+%       next to the CIs in Section 5 (or in a summary table).
+
+The rotation interaction is
+\begin{equation}\label{eq:interaction}
+\Delta_s=(L_{\mathrm{BO,rot},s}-L_{\mathrm{BO,aligned},s})-(L_{\mathrm{CMA,rot},s}-L_{\mathrm{CMA,aligned},s}).
+\end{equation}
+Positive $\Delta$ means a larger rotation penalty for BO on the log-regret scale. A CI excluding zero supports a differential rotation effect; it does not establish the uniqueness of the proposed kernel mechanism. An isotropic-BO ablation and length-scale diagnostics provide additional mechanistic evidence.
+
+\section{Results and mathematical interpretation}
+\subsection{Experiment 1: ambient dimension}
+\begin{table}[H]\centering\caption{Median final regret at $B=200$ on the full-dimensional quadratic ($k=D$).}\begin{tabular}{rrrr}\toprule $D$&BO-ARD&CMA-ES&Random\\\midrule 2&$2.0\times10^{-6}$&$1.0\times10^{-8}$&$2.3\times10^{-3}$\\5&$2.0\times10^{-5}$&$1.6\times10^{-3}$&$4.1\times10^{-2}$\\10&$1.4\times10^{-4}$&$3.5\times10^{-2}$&$0.105$\\20&$2.9\times10^{-4}$&$0.110$&$0.178$\\\bottomrule\end{tabular}\end{table}
+% REVISED: generation counts corrected (200/8 = 25 and 200/10 = 20 exactly).
+% TODO: if your implementation spends one extra evaluation (e.g. on x0),
+%       adjust these counts and say so.
+At $D=2$, CMA-ES achieves about two orders of magnitude lower regret than BO-ARD; at $D=5,10,20$, BO-ARD is better by paired median log-regret differences of $-2.00$, $-2.50$ and $-2.57$ decades, respectively. The budget translates into $\lceil B/\lambda\rceil$ generations: 34 at $D=2$ ($\lambda=6$), 25 at $D=5$ ($\lambda=8$), 20 at $D=10$ ($\lambda=10$), and 17 at $D=20$ ($\lambda=12$; the final generation is partial).
+
+% REVISED: covariance learning is not the bottleneck on the sphere.
+Because $k=D$ and $A=I_D$ in this experiment, the objective is the sphere function, whose ideal search covariance is $C\propto I_D$. Covariance learning is therefore not required here, and the $O(D^{-2})$ covariance learning rates of Section~3.3 do not explain CMA-ES's performance. Likewise, the final $\operatorname{cond}(C)\approx2.2$ at $D=20$ reflects stochastic drift away from the ideal value of 1 rather than incomplete adaptation. The more informative quantity is the step size: the final median $\sigma$ at $D=20$ is $0.478$, compared with the initial $0.6$. Ignoring the boundary transformation, a sample $x=m+\sigma z$ with $C=I_D$ satisfies $\E f(x)=f(m)+\sigma^2$, so sampling spread alone adds about $\sigma^2\approx0.23$ to a typical evaluation, of the same order as the observed median regret of $0.110$ (the best of 200 evaluations). On the sphere, near-optimal step sizes shrink in proportion to the distance to the optimum divided by $D$, so a step size that has barely decreased indicates that \emph{step-size} adaptation, rather than covariance adaptation, limits CMA-ES at this budget. The rising fraction of out-of-bounds coordinates late in the run (Section~6) suggests an interaction between the coordinatewise boundary transformation and step-size adaptation; this was not isolated experimentally and remains a hypothesis. This offers a plausible finite-budget explanation, not a proof of asymptotic convergence rates.
+% TODO (recommended): add a figure of median sigma vs generation for D = 2..20,
+%       and/or a small unbounded CMA-ES control run at D = 20.
+
+At $D=20$, the paired BO-minus-CMA difference narrows from $-2.57$ decades at $t=200$ to $-2.10$ at $t=500$. BO-ARD's median regret is $2.0\times10^{-4}$ at 500 evaluations, while CMA-ES reaches $3.6\times10^{-4}$ at 1000. Since BO was not run to 1000, a reversal cannot be asserted. H1 is not falsified for $D\ge5$, with a clear low-dimensional exception.
+
+\subsection{Experiment 2: effective dimension}
+\begin{table}[H]\centering\caption{Median regret for axis-aligned quadratics at $D=20$, $B=200$.}\begin{tabular}{rrrr}\toprule $k$&BO-ARD&CMA-ES&Random\\\midrule 2&$4.6\times10^{-8}$&$8.2\times10^{-4}$&$2.5\times10^{-3}$\\5&$1.0\times10^{-5}$&$2.4\times10^{-2}$&$4.6\times10^{-2}$\\10&$2.2\times10^{-4}$&$4.8\times10^{-2}$&$0.110$\\20&$2.9\times10^{-4}$&$0.110$&$0.178$\\\bottomrule\end{tabular}\end{table}
+% REVISED: sign convention made explicit and consistent.
+Reducing $k$ from 20 to 2 lowers BO-ARD's log-regret by a paired median of $3.82$ decades and CMA-ES's by $2.13$ decades. Writing $\delta_{M,s}=L_{M,k=2,s}-L_{M,k=20,s}$ for the change of method $M$ on seed $s$ (negative values are improvements), the paired difference $\med_s(\delta_{\mathrm{BO},s}-\delta_{\mathrm{CMA},s})$ is $-1.44$ decades (95\% CI $[-2.27,-0.68]$); a negative value means BO-ARD gains more from the reduction in $k$. In the aligned setting, the GP can suppress inactive coordinate distances by increasing their length scales. At $k=2$, the final median active and inactive length scales are $0.71$ and $105$, respectively; all 20 runs separate every active length scale from every inactive one. This is direct evidence that the fitted surrogate has learned coordinate relevance.
+
+CMA-ES still operates with $D=20$, $\lambda=12$ and the corresponding covariance learning rates; its computational adaptation dimension does not automatically become $k$. Its $2.13$-decade improvement from $k=20$ to $2$ is close to random search's $1.82$-decade improvement, consistent with incomplete covariance learning at this budget. % REVISED
+This interpretation should not be extended to a claim that CMA-ES can never exploit effective dimension at larger budgets. At $k=10$, CMA-ES improves slightly more than BO-ARD, so the advantage is not uniform over all $k$.
+
+The $D=k$ reference runs provide a lower-dimensional comparison, not a mathematical lower bound on regret: changing $D$ also changes the optimiser's initial design, hyperparameters and sampling behaviour. Indeed, at $k=2$, the $D=20$ BO-ARD run outperforms the $D=2$ BO-ARD reference ($4.6\times10^{-8}$ versus $2.0\times10^{-6}$), consistent with the observed low-dimensional BO plateau.
+
+\subsection{Experiment 3: orientation and the ARD mechanism}
+\begin{table}[H]\centering\caption{Median regret for aligned versus randomly rotated quadratic subspaces ($D=20,k=2$).}\begin{tabular}{lrr}\toprule Method&Aligned&Rotated\\\midrule BO-ARD&$4.6\times10^{-8}$&$2.4\times10^{-4}$\\BO-iso&$7.6\times10^{-5}$&$4.5\times10^{-5}$\\CMA-ES&$8.2\times10^{-4}$&$7.6\times10^{-4}$\\Random&$2.5\times10^{-3}$&$2.9\times10^{-3}$\\\bottomrule\end{tabular}\end{table}
+The paired BO-ARD rotation penalty is $+3.59$ decades (95\% CI $[3.02,3.87]$), whereas BO-iso and CMA-ES show differences of $-0.07$ decades each, with intervals including zero. The BO-ARD-versus-CMA interaction is $\med(\Delta_s)=+3.39$ decades, CI $[3.03,3.96]$; for BO-iso it is $+0.09$, CI $[-0.27,0.32]$. This combination is consistent with the diagonal ARD kernel metric being well matched to coordinate-aligned sparsity but poorly matched to rotated ridge structure. The isotropic ablation strengthens this explanation because it changes the kernel's directional parameterisation while retaining the broad BO workflow. It does not eliminate other effects of fitting and acquisition optimisation. CMA-ES's orientation-insensitivity in regret is partly expected for a simpler reason: a search distribution that has barely adapted samples almost isotropically, and isotropic sampling is unaffected by rotation. It is therefore evidence of limited adaptation as much as of rotational equivariance. % REVISED
+
+\subsection{Experiment 4: partial rotation and covariance alignment}
+% TODO: CMA-ES at 90 deg (7.6e-4) equals CMA-ES under random rotation in
+%       Table 3 -- check this is a genuine coincidence, not a copied value.
+\begin{table}[H]\centering\caption{Median final regret across partial-rotation angles ($D=20,k=2$).}\begin{tabular}{rrrr}\toprule $\theta$&BO-ARD&BO-iso&CMA-ES\\\midrule $0^\circ$&$4.6\times10^{-8}$&$7.6\times10^{-5}$&$8.2\times10^{-4}$\\$22.5^\circ$&$1.1\times10^{-4}$&$6.6\times10^{-5}$&$8.9\times10^{-4}$\\$45^\circ$&$1.6\times10^{-4}$&$5.6\times10^{-5}$&$4.8\times10^{-4}$\\$67.5^\circ$&$2.8\times10^{-4}$&$6.1\times10^{-5}$&$3.3\times10^{-4}$\\$90^\circ$&$1.8\times10^{-4}$&$8.3\times10^{-5}$&$7.6\times10^{-4}$\\\bottomrule\end{tabular}\end{table}
+% REVISED: geometric explanation of the abrupt loss.
+The anticipated gradual deterioration is \emph{not} observed on the tested grid: BO-ARD loses approximately $3.4$ decades by $22.5^\circ$, and performance remains broadly similar at larger angles. In hindsight, this is consistent with the geometry of $A(\theta)$. Since $E^\top Q_\perp=0$, the diagonal entries of $P=A(\theta)A(\theta)^\top$ on the $D-k$ formerly inactive coordinates sum to $k\sin^2\theta$, while $\operatorname{tr}P=k$; a fraction $\sin^2\theta$ of the curvature therefore lies on those coordinates, about $0.15$ at $22.5^\circ$. Coordinate sparsity is destroyed by \emph{any} nonzero rotation. Once the inactive-coordinate sensitivity is large enough for the GP to detect at its noise level, ARD can no longer discard any coordinate, and BO-ARD effectively faces a 20-dimensional problem. Its $22.5^\circ$ regret ($1.1\times10^{-4}$) is indeed of the same order as the full-dimensional $D=k=20$ result ($2.9\times10^{-4}$), although the two objectives differ. The predeclared expectation of gradual deterioration overlooked this. Because no angles between $0^\circ$ and $22.5^\circ$ were tested, the grid cannot resolve whether the loss is abrupt or gradual within that interval.
+
+Nevertheless, the diagnostic ratio $\min_{j\le2}\ell_j/\min_{j>2}\ell_j$ rises from $0.022$ at $0^\circ$ to $0.36$, $0.61$, $1.67$, and $17.8$ as $\theta$ increases. These are different quantities: the ratio measures which original axes receive short length scales, not the fidelity of a learned rotated subspace. The $90^\circ$ construction places the active directions entirely outside the first two axes, so the reversal of coordinate importance is expected.
+
+% REVISED: alignment diagnostic caveats.
+For CMA-ES, the largest principal angle between the \emph{bottom}-2 covariance eigenvectors and the active subspace is $42^\circ$ when aligned and approximately $59$--$79^\circ$ for nonzero partial angles, compared with a random-subspace chance median near $84^\circ$. Covariance alignment is therefore weak after about 17 generations. Whether it is genuinely orientation-dependent is less clear, for two reasons. First, when $C$ remains close to isotropic, its bottom eigenvectors are poorly determined (Section~3.3), and principal angles near chance are expected for any orientation. Second, the coordinatewise \texttt{BoundTransform} may impose axis-aligned structure on $C$ independently of the objective, which would favour the aligned case. The difference between $42^\circ$ and $59$--$79^\circ$ was also not assessed with the paired procedure of Section~4.2. The hypothesis of orientation-independent covariance alignment is therefore not supported, but orientation dependence is not firmly established either. The distinction between regret and internal-state alignment remains important: acceptable objective values can arise before a covariance matrix accurately identifies the active subspace.
+% TODO: report the eigenvalue gap (or cond(C)) for these k = 2 runs, and a
+%       paired CI for the aligned-vs-rotated principal-angle difference.
+
+\subsection{Experiment 5: Rosenbrock generalisation}
+On the embedded Rosenbrock benchmark, BO-ARD's median regret changes from $1.4\times10^{-3}$ (aligned) to $0.15$ (rotated); CMA-ES changes from $0.14$ to $0.10$, and BO-iso from $0.36$ to $0.27$. The BO-ARD rotation penalty is $+1.90$ decades, and the BO-ARD-versus-CMA interaction is $+2.26$ decades (95\% CI $[1.40,2.68]$). The isotropic interaction is $-0.03$ decades. Hence the differential rotation effect persists on a non-quadratic active-space objective, although rotated BO-ARD is not demonstrably better than CMA-ES or random search in this setting. This supports the generality of the observed orientation dependence within the two tested objective families, not for arbitrary black-box functions.
+% TODO: add random search's aligned/rotated medians here (the sentence above
+%       compares against random search but gives no numbers), and CIs for
+%       the BO-ARD penalty and the isotropic interaction.
+
+\subsection{Sensitivity analysis}
+Separate sensitivity seeds vary CMA-ES initial step size ($0.3$, $0.6$, $1.0$), population size ($12$ versus $24$), and BO initial Sobol design ($D$ versus $2D$). The BO-ARD-versus-CMA rotation interaction remains positive, ranging from $+3.19$ to $+4.34$ decades with confidence intervals excluding zero. Thus the principal orientation conclusion is not overturned by these predeclared variations. The small advantage of rotated BO-ARD over CMA-ES, however, is sensitive to settings, including the $\sigma_0=0.3$ case where the difference is not statistically significant.
+
+\section{Computational cost, boundary effects and limitations}
+% REVISED: cost attribution and overhead ratio.
+For a dense GP, exact Cholesky-based inference costs $O(n^3)$ arithmetic and $O(n^2)$ memory. At $n\le200$, however, a single factorisation is cheap, and the observed wall times are dominated by repeated marginal-likelihood optimisation over the hyperparameters ($D$ length scales and the noise variance for BO-ARD) and by multi-start acquisition optimisation, both performed at every iteration. CMA-ES updates a population distribution without any surrogate fitting. The recorded median wall times at $B=200$ are approximately $94$ seconds for BO-ARD at $D=k=20$, $296$ seconds for aligned BO-ARD at $D=20,k=2$, and $0.012$--$0.015$ seconds for CMA-ES. BO-ARD's total wall time is therefore roughly $6\times10^3$ to $2.5\times10^4$ times that of CMA-ES, i.e.\ of order $10^4$; because the objective is cheap, this is essentially the ratio of optimiser overheads. The roughly threefold longer time for aligned $k=2$ than for $k=D=20$, at identical $D$ and $n$, is not explained by the $O(n^3)$ term; a plausible but untested cause is that very long inactive length scales make hyperparameter and acquisition optimisation harder. These ratios describe inexpensive synthetic objectives and shared-load timing; they would have less influence if objective evaluations themselves were extremely costly.
+
+Boundary effects are substantial. At $D=20$, roughly $23\%$ of raw CMA-ES coordinate samples are initially outside bounds, rising to $34$--$50\%$ late in the run; almost every full sample vector violates at least one bound. Under independent coordinates with per-coordinate violation probability $p$, the probability of any violation is $1-(1-p)^D$, illustrating how moderate per-coordinate rates become frequent vector-level violations in high dimensions. This independence calculation is illustrative, not an exact model of the adapted CMA-ES distribution. The increase in violations late in the run is unexpected for a search converging to an interior optimum ($x^\star\in[-0.5,0.5]^D$) and is consistent with the step-size behaviour discussed in Section~5.1. Coordinatewise boundary transformations also break exact rotational symmetry. % REVISED
+
+% REVISED: noise-floor argument.
+A second limitation is BO's apparent regret floor. At $D=2$, BO-ARD plateaus near $2\times10^{-6}$, and at $D=k=20$ near $2$--$3\times10^{-4}$. Supplementary fits on five seeds per condition find that the learned standardised noise variance sits at its imposed lower bound $10^{-4}$. The constraint is therefore binding: the marginal likelihood would prefer a smaller noise level than the model is permitted to use, which makes the noise bound a plausible contributor to the plateau. The implied noise standard deviation in original objective units is approximately $2\times10^{-3}$, but comparing this value with the regret is not itself diagnostic, since a GP can localise the minimiser of a smooth function more precisely than its noise level when many nearby observations are available, as the $D=2$ result shows. The plateau also differs by about two orders of magnitude between $D=2$ and $D=20$, so the noise bound cannot be its only determinant. Alternative deterministic or lower-noise GP configurations would be needed for a causal test.
+% TODO: state which condition the 2e-3 noise SD refers to (D = 20? D = 2?).
+
+Further limitations include unequal extended budgets (BO 500 versus CMA-ES 1000), no tests of rotation at $k>2$, runtime measured with 15--20 concurrent processes, finite sample size (20 paired final seeds), and only two objective families. BO's space-filling initial design and CMA-ES's single-centre initialisation are native but not informationally identical. No method received privileged subspace information.
+
+\section{Conclusion}
+% REVISED
+Under 200 evaluations, BO-ARD is more evaluation-efficient than CMA-ES on the tested full-dimensional quadratics for $D\ge5$, and particularly effective when the true low-dimensional dependence is axis-aligned. On these full-dimensional (sphere) instances, CMA-ES appears to be limited by slow step-size reduction under the boundary transformation rather than by covariance learning. The mathematics of the ARD kernel explains why inactive coordinate axes can be suppressed, and why the same diagonal metric cannot encode invariance along rotated active subspaces. Rotation produces a large, statistically supported BO-ARD penalty on both quadratic and Rosenbrock benchmarks; BO-iso and CMA-ES show much smaller orientation effects in regret. However, two mechanistic predictions are not supported. Most of BO-ARD's loss has already occurred by the smallest tested angle of $22.5^\circ$, consistent with coordinate sparsity being destroyed by any nonzero rotation, rather than accumulating gradually across the tested angles. And CMA-ES covariance alignment at 200 evaluations is too weak, and its diagnostic too noisy, to confirm orientation independence. CMA-ES has vastly lower optimiser overhead and improves substantially with longer budgets, but the available extended runs do not establish an eventual crossover. The practical choice therefore depends on evaluation budget, objective cost, dimension, coordinate structure and domain constraints.
+
+\begin{thebibliography}{9}
+\bibitem{frazier} P. I. Frazier, \emph{A Tutorial on Bayesian Optimization}, 2018. \url{https://arxiv.org/abs/1807.02811}.
+\bibitem{hansen} N. Hansen, \emph{The CMA Evolution Strategy: A Tutorial}, 2016. \url{https://arxiv.org/abs/1604.00772}.
+\bibitem{hvarfner} C. Hvarfner et al., \emph{Vanilla Bayesian Optimization Performs Great in High Dimensions}, 2024. \url{https://arxiv.org/abs/2402.02229}.
+\bibitem{coco} N. Hansen et al., \emph{COCO: A Platform for Comparing Continuous Optimizers}, 2016. \url{https://arxiv.org/abs/1603.08785}.
+\bibitem{brief} A. Thiery, \emph{Bayesian Optimization versus Evolution Strategies: Project Brief}. \url{https://alexxthiery.github.io/teaching/bo-vs-es/bo-vs-es.html}.
+\end{thebibliography}
+\end{document}
